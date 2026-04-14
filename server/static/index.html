@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DSN Facturation &mdash; Linc</title>
+  <meta name="description" content="D&#233;posez un fichier DSN pour obtenir le d&#233;tail des bulletins facturables et un score de complexit&#233; gestionnaire. Outil gratuit propos&#233; par Linc.">
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <script>
+    // Light theme is the only theme — force it before first paint
+    document.documentElement.setAttribute("data-theme", "light");
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body data-state="empty">
+
+  <!-- Theme toggle hidden — light only -->
+  <button id="theme-toggle" class="theme-toggle" type="button" aria-label="Changer de thème" hidden></button>
+
+  <!-- ── Drop zone screen ──────────────────────────────────── -->
+  <main id="dropzone-screen" class="screen">
+    <section class="empty-shell">
+      <div class="empty-shell__content">
+        <div class="empty-intro">
+          <p class="empty-intro__eyebrow"><span class="beta-pill">Beta</span></p>
+          <h1>DSN Facturation</h1>
+          <p class="empty-intro__lead">
+            D&#233;posez votre fichier pour obtenir le d&#233;tail des bulletins facturables et le score de complexit&#233;.
+          </p>
+          <div class="empty-intro__points">
+            <p>Formats : `.dsn`, `.txt`, `.edi`</p>
+          </div>
+        </div>
+
+        <div id="dropzone" class="dropzone">
+          <div class="dropzone__icon">
+            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="17 8 12 3 7 8"/>
+              <line x1="12" y1="3" x2="12" y2="15"/>
+            </svg>
+          </div>
+          <p class="dropzone__label" id="dropzone-label">D&#233;posez un fichier .dsn, .txt ou .edi ici</p>
+          <p class="dropzone__sublabel" id="dropzone-sublabel">ou cliquez pour parcourir</p>
+          <input type="file" id="file-input" accept=".dsn,.txt,.edi" hidden>
+          <button id="browse-btn" class="btn btn--primary" type="button">Choisir un fichier</button>
+          <div id="spinner" class="spinner" hidden></div>
+          <p id="spinner-label" class="spinner-label" hidden>Traitement en cours...</p>
+          <p id="dropzone-error" class="dropzone__error"></p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Error screen ──────────────────────────────────────── -->
+  <main id="error-screen" class="screen">
+    <div class="error-card">
+      <p class="error-card__title" id="error-title">Erreur</p>
+      <p class="error-card__detail" id="error-detail"></p>
+      <ul class="error-card__warnings" id="error-warnings"></ul>
+      <div class="error-card__actions">
+        <button class="btn btn--secondary" type="button" id="feedback-btn-error" data-action="feedback" hidden><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M13 8H7"/><path d="M17 12H7"/></svg>Signaler un retour</button>
+        <button class="btn btn--primary" type="button" data-action="reset"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="m9 15 3-3 3 3"/></svg>Charger un autre fichier</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- ── Results screen ────────────────────────────────────── -->
+  <main id="results-screen" class="screen">
+
+    <!-- Header -->
+    <header class="results-header">
+      <div class="results-header__meta">
+        <h1 class="results-header__company" id="header-company"></h1>
+        <div class="results-header__details">
+          <span class="mono" id="header-siret"></span>
+          <span id="header-period"></span>
+        </div>
+      </div>
+      <div class="results-header__actions">
+        <button class="btn btn--secondary" type="button" id="feedback-btn-results" data-action="feedback" hidden><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M13 8H7"/><path d="M17 12H7"/></svg>Partager un retour</button>
+        <button class="btn btn--secondary" type="button" data-action="reset"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="m9 15 3-3 3 3"/></svg>Nouveau fichier</button>
+      </div>
+    </header>
+
+    <!-- Page navigation — hidden while only one page exists -->
+    <nav id="page-nav" class="page-nav" hidden>
+      <button class="page-nav__btn page-nav__btn--active" type="button" data-page="tracking">Facturation</button>
+    </nav>
+
+    <!-- Scope toggle (hidden – global only) -->
+    <div class="scope-toggle" hidden>
+      <button class="scope-toggle__btn scope-toggle__btn--active" type="button" data-scope="global">Global</button>
+      <button class="scope-toggle__btn" type="button" data-scope="establishment">Par &#233;tablissement</button>
+    </div>
+
+    <!-- Establishment tabs (hidden – global only) -->
+    <nav id="establishment-tabs" class="tab-bar" hidden></nav>
+
+    <!-- Establishment detail (hidden – global only) -->
+    <div id="establishment-detail" class="establishment-detail" hidden></div>
+
+    <!-- Warnings banner -->
+    <div id="warnings-banner" class="warnings-banner" hidden>
+      <div class="warnings-banner__icon">&#9888;</div>
+      <div>
+        <p class="warnings-banner__title">Avertissements qualit&#233;</p>
+        <ul class="warnings-banner__list" id="warnings-list"></ul>
+      </div>
+    </div>
+
+    <!-- ═══ Page: Analyse sociale ═══════════════════════════════ -->
+    <div id="page-analyse" class="page-content" hidden>
+
+    <!-- Summary cards -->
+    <section class="card-row">
+      <div class="summary-card">
+        <span class="summary-card__label">Salari&#233;s</span>
+        <span class="summary-card__value" id="card-employees">0</span>
+      </div>
+      <div class="summary-card">
+        <span class="summary-card__label">Embauches</span>
+        <span class="summary-card__value" id="card-hires">0</span>
+      </div>
+      <div class="summary-card">
+        <span class="summary-card__label">Sorties</span>
+        <span class="summary-card__value" id="card-exits">0</span>
+      </div>
+      <div class="summary-card">
+        <span class="summary-card__label">Stagiaires</span>
+        <span class="summary-card__value" id="card-stagiaires">0</span>
+      </div>
+    </section>
+
+    <!-- Retirement category table -->
+    <section class="data-section">
+      <h2 class="data-section__title">Par cat&#233;gorie de retraite</h2>
+      <table class="data-table">
+        <thead>
+          <tr><th>Code</th><th>Libell&#233;</th><th>Nombre</th></tr>
+        </thead>
+        <tbody id="table-retirement"></tbody>
+      </table>
+    </section>
+
+    <!-- Contract nature table -->
+    <section class="data-section">
+      <h2 class="data-section__title">Par nature de contrat</h2>
+      <table class="data-table">
+        <thead>
+          <tr><th>Code</th><th>Libell&#233;</th><th>Nombre</th></tr>
+        </thead>
+        <tbody id="table-contract"></tbody>
+      </table>
+    </section>
+
+    <!-- Amounts -->
+    <section class="data-section">
+      <h2 class="data-section__title">Montants</h2>
+      <div class="kv-grid">
+        <div class="kv-row">
+          <span class="kv-row__label">Tickets restaurant (employeur)</span>
+          <span class="kv-row__value" id="amt-tickets">N.C.</span>
+        </div>
+        <div class="kv-row">
+          <span class="kv-row__label">Transport (public)</span>
+          <span class="kv-row__value" id="amt-transport-public">N.C.</span>
+        </div>
+        <div class="kv-row">
+          <span class="kv-row__label">Transport (personnel)</span>
+          <span class="kv-row__value" id="amt-transport-personal">N.C.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Extras -->
+    <section class="data-section">
+      <h2 class="data-section__title">Compl&#233;ments</h2>
+      <div class="kv-grid">
+        <div class="kv-row">
+          <span class="kv-row__label">Net fiscal</span>
+          <span class="kv-row__value" id="ext-net-fiscal">N.C.</span>
+        </div>
+        <div class="kv-row">
+          <span class="kv-row__label">Net vers&#233;</span>
+          <span class="kv-row__value" id="ext-net-paid">N.C.</span>
+        </div>
+        <div class="kv-row">
+          <span class="kv-row__label">PAS total</span>
+          <span class="kv-row__value" id="ext-pas">N.C.</span>
+        </div>
+        <div class="kv-row">
+          <span class="kv-row__label">Brut (bases salaire)</span>
+          <span class="kv-row__value" id="ext-gross">N.C.</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Analyse sociale detail ─────────────────────────────── -->
+    <section class="dashboard-section dashboard-section--no-top" id="section-social">
+
+      <div class="card-row">
+        <div class="summary-card">
+          <span class="summary-card__label">Effectif</span>
+          <span class="summary-card__value" id="sa-effectif">0</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-card__label">Entr&#233;es</span>
+          <span class="summary-card__value" id="sa-entrees">0</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-card__label">Sorties</span>
+          <span class="summary-card__value" id="sa-sorties">0</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-card__label">Stagiaires</span>
+          <span class="summary-card__value" id="sa-stagiaires">0</span>
+        </div>
+      </div>
+
+      <div class="card-row card-row--half">
+        <div class="summary-card">
+          <span class="summary-card__label">Cadres</span>
+          <span class="summary-card__value" id="sa-cadre">0</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-card__label">Non-cadres</span>
+          <span class="summary-card__value" id="sa-non-cadre">0</span>
+        </div>
+      </div>
+
+      <div class="data-section">
+        <h3 class="data-section__title">Contrats</h3>
+        <table class="data-table">
+          <thead><tr><th>Code</th><th>Libell&#233;</th><th>Nombre</th></tr></thead>
+          <tbody id="sa-table-contracts"></tbody>
+        </table>
+      </div>
+
+      <div class="data-section">
+        <h3 class="data-section__title">Motifs de sortie</h3>
+        <table class="data-table">
+          <thead><tr><th>Code</th><th>Libell&#233;</th><th>Nombre</th></tr></thead>
+          <tbody id="sa-table-exit-reasons"></tbody>
+        </table>
+      </div>
+
+      <div class="data-section">
+        <h3 class="data-section__title">Absences / suspensions</h3>
+        <div class="card-row card-row--half" style="margin-bottom: var(--sp-4);">
+          <div class="summary-card summary-card--compact">
+            <span class="summary-card__label">Salari&#233;s concern&#233;s</span>
+            <span class="summary-card__value" id="sa-abs-employees">0</span>
+          </div>
+          <div class="summary-card summary-card--compact">
+            <span class="summary-card__label">&#201;v&#233;nements</span>
+            <span class="summary-card__value" id="sa-abs-events">0</span>
+          </div>
+        </div>
+        <table class="data-table">
+          <thead><tr><th>Code motif</th><th>Nombre</th></tr></thead>
+          <tbody id="sa-table-absences"></tbody>
+        </table>
+      </div>
+
+      <div class="data-section">
+        <h3 class="data-section__title">R&#233;mun&#233;ration</h3>
+        <div class="kv-grid">
+          <div class="kv-row">
+            <span class="kv-row__label">Net vers&#233;</span>
+            <span class="kv-row__value" id="sa-net-verse">N.C.</span>
+          </div>
+          <div class="kv-row">
+            <span class="kv-row__label">Net fiscal</span>
+            <span class="kv-row__value" id="sa-net-fiscal">N.C.</span>
+          </div>
+          <div class="kv-row">
+            <span class="kv-row__label">PAS total</span>
+            <span class="kv-row__value" id="sa-pas">N.C.</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="data-section" id="sa-alerts-section" hidden>
+        <h3 class="data-section__title">Alertes qualit&#233; (<span id="sa-alerts-count">0</span>)</h3>
+        <ul class="alerts-list" id="sa-alerts-list"></ul>
+      </div>
+    </section>
+
+    </div><!-- /page-analyse -->
+
+    <!-- ═══ Page: Facturation ══════════════════════════════════ -->
+    <div id="page-tracking" class="page-content">
+
+    <section class="dashboard-section dashboard-section--no-top" id="section-tracking">
+      <h2 class="dashboard-section__title">Bulletins facturables et complexit&#233;</h2>
+
+      <div class="card-row">
+        <div class="summary-card">
+          <span class="summary-card__label">Bulletins</span>
+          <span class="summary-card__value" id="pt-bulletins">0</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-card__label">Entr&#233;es facturables</span>
+          <span class="summary-card__value" id="pt-entries">0</span>
+          <div class="name-list" id="pt-entries-names"></div>
+        </div>
+        <div class="summary-card">
+          <span class="summary-card__label">Sorties facturables</span>
+          <span class="summary-card__value" id="pt-exits">0</span>
+          <div class="name-list" id="pt-exits-names"></div>
+        </div>
+        <div class="summary-card">
+          <span class="summary-card__label">Absences facturables</span>
+          <span class="summary-card__value" id="pt-absences">0</span>
+          <div class="name-list" id="pt-absences-names"></div>
+        </div>
+      </div>
+
+      <div class="card-row card-row--half">
+        <div class="summary-card" id="pt-exceptional-card" hidden>
+          <span class="summary-card__label">&#201;v&#233;nements exceptionnels</span>
+          <span class="summary-card__value" id="pt-exceptional">0</span>
+        </div>
+        <div class="summary-card">
+          <span class="summary-card__label">Anomalies DSN</span>
+          <span class="summary-card__value" id="pt-anomalies">0</span>
+        </div>
+      </div>
+
+      <div class="data-section">
+        <h3 class="data-section__title">Score de complexit&#233;</h3>
+        <div class="complexity-score" id="pt-score-value">0</div>
+        <p class="complexity-score__caption">Indicateur de charge de travail (non contractuel)</p>
+        <table class="data-table" style="margin-top: var(--sp-4);">
+          <thead><tr><th>Composante</th><th>Valeur</th><th>Poids</th><th>Points</th></tr></thead>
+          <tbody id="pt-score-inputs"></tbody>
+        </table>
+      </div>
+    </section>
+
+    </div><!-- /page-tracking -->
+
+    <!-- ═══ Page: Contrôle de DSN ══════════════════════════════ -->
+    <div id="page-controle" class="page-content" hidden>
+
+    <section class="dashboard-section dashboard-section--no-top" id="section-contributions">
+      <h2 class="dashboard-section__title">Rapprochement cotisations</h2>
+
+      <div class="controle-sticky-header">
+        <div id="cc-trust-banner" hidden></div>
+        <nav id="contrib-family-tabs" class="tab-bar tab-bar--sub"></nav>
+      </div>
+
+      <div class="contrib-view">
+        <div id="contrib-family-panels"></div>
+      </div>
+    </section>
+
+    </div><!-- /page-controle -->
+
+  </main>
+
+  <footer class="site-footer">
+    <div class="site-footer__inner">
+      <a class="site-footer__brand" href="https://www.linc.fr?utm_source=dsn-facturation&amp;utm_medium=tool&amp;utm_campaign=beta-footer" target="_blank" rel="noreferrer">
+        <img class="site-footer__logo" src="/static/logo-linc.svg" alt="Linc" width="60" height="24">
+      </a>
+      <nav class="site-footer__nav">
+        <a class="site-footer__nav-link" href="https://www.linc.fr/ressources/rgdu/simulateur?utm_source=dsn-facturation&amp;utm_medium=tool&amp;utm_campaign=beta-footer&amp;utm_content=footer-rgdu" target="_blank" rel="noreferrer">Contr&#244;le RGDU</a>
+        <a class="site-footer__nav-link" href="https://www.linc.fr/ressources/cotisations/simulateur?utm_source=dsn-facturation&amp;utm_medium=tool&amp;utm_campaign=beta-footer&amp;utm_content=footer-cotisations" target="_blank" rel="noreferrer">Contr&#244;le tranches et CET</a>
+      </nav>
+    </div>
+  </footer>
+
+  <dialog id="feedback-modal" class="feedback-modal" aria-labelledby="feedback-title">
+    <form id="feedback-form" class="feedback-modal__panel" method="dialog" novalidate>
+      <div class="feedback-modal__header">
+        <div>
+          <p class="feedback-modal__eyebrow">Retour beta</p>
+          <h2 id="feedback-title">Partager un retour</h2>
+        </div>
+        <button id="feedback-close" class="feedback-modal__close" type="button" aria-label="Fermer">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 6 6 18"/>
+            <path d="m6 6 12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div id="feedback-form-view">
+        <p class="feedback-modal__intro">
+          Votre message et un contexte technique limit&#233; sont envoy&#233;s &#224; nos &#233;quipes pour qu&rsquo;elles puissent comprendre, corriger et revenir vers vous si besoin.
+        </p>
+
+        <div class="feedback-form__grid">
+          <label class="field field--full">
+            <span class="field__label">Type de retour</span>
+            <select id="feedback-category" class="field__control" required>
+              <option value="">Choisir</option>
+              <option value="improvement">Am&#233;lioration</option>
+              <option value="issue">Probl&#232;me / &#233;cart</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span class="field__label">Email</span>
+            <input id="feedback-email" class="field__control" type="email" placeholder="vous@exemple.com" required>
+          </label>
+
+          <label class="field">
+            <span class="field__label">T&#233;l&#233;phone</span>
+            <input id="feedback-phone" class="field__control" type="tel" placeholder="06 12 34 56 78" required>
+          </label>
+
+          <label class="field field--full">
+            <span class="field__label">Message</span>
+            <textarea id="feedback-message" class="field__control field__control--textarea" rows="5" placeholder="Dites-nous ce que vous avez vu, ce qui manque ou ce qui ne fonctionne pas." required></textarea>
+          </label>
+
+          <label class="field field--checkbox field--full">
+            <input id="feedback-consent" type="checkbox" required>
+            <span>J&rsquo;accepte que mes coordonn&#233;es et ce retour soient trait&#233;s pour analyser ma demande et me recontacter.</span>
+          </label>
+        </div>
+
+        <p id="feedback-form-error" class="feedback-form__error" hidden></p>
+
+        <div class="feedback-modal__actions">
+          <button id="feedback-cancel" class="btn btn--secondary" type="button">Annuler</button>
+          <button id="feedback-submit" class="btn btn--primary" type="submit">Envoyer</button>
+        </div>
+      </div>
+
+      <div id="feedback-success-view" class="feedback-success" hidden>
+        <div class="feedback-success__icon">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m5 12 5 5L20 7"/>
+          </svg>
+        </div>
+        <h3>Retour envoy&#233;</h3>
+        <p>Merci pour votre retour. Nos &#233;quipes vont l&rsquo;analyser avec le fichier et le contexte transmis. Vos retours comptent, on construit cet outil avec vous.</p>
+        <button id="feedback-done" class="btn btn--primary" type="button">Fermer</button>
+      </div>
+    </form>
+  </dialog>
+
+</body>
+</html>

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dsn-facturation"
+version = "0.1.0"
+description = "Compteur de bulletins facturables et score de complexité gestionnaire à partir d'un fichier DSN"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.0,<3.0",
+]
+
+[project.optional-dependencies]
+server = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.34",
+    "python-multipart>=0.0.18",
+    "python-dotenv>=1.0",
+    "resend>=2.0",
+]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.28",
+]
+
+[tool.setuptools.packages.find]
+include = ["dsn_extractor*", "server*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
