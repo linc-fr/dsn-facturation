@@ -148,7 +148,441 @@
     feedbackOpen: false,
     feedbackSubmitting: false,
     feedbackSuccess: false,
+    // Billing-control state
+    fileSha256: null,
+    fileSize: null,
+    currentSiret: null,
+    currentMonth: null,
+    currentScope: "global",
+    currentScopeKey: "global",
+    currentEstablishmentId: null,
+    currentControlId: null,
+    pendingMismatch: null,   // { siret, month, scopeKey, uploadedFingerprint }
+    pendingScopeChoice: null,// { siret, establishments }
+    addLineModalTab: "dsn",
   };
+
+  // ── Billing-control: storage layer (localStorage) ────────
+  var BC_STORE_KEY = "dsn-facturation/v1";
+
+  function _bcDefaultCabinetLines() {
+    return [
+      { id: "forfait",   kind: "free", label: "Forfait mensuel",       qty: 1, unitPrice: 0 },
+      { id: "bulletins", kind: "dsn",  label: "Bulletins",  source: "bulletins",               unitPrice: 0 },
+      { id: "entries",   kind: "dsn",  label: "Entr\u00e9es", source: "billable_entries",        unitPrice: 0 },
+      { id: "exits",     kind: "dsn",  label: "Sorties",    source: "billable_exits",          unitPrice: 0 },
+      { id: "absences",  kind: "dsn",  label: "Absences",   source: "billable_absence_events", unitPrice: 0 },
+    ];
+  }
+
+  function bcLoadStore() {
+    try {
+      var raw = localStorage.getItem(BC_STORE_KEY);
+      if (!raw) {
+        return { schemaVersion: 1, cabinetDefault: { lines: _bcDefaultCabinetLines() }, clients: {} };
+      }
+      var parsed = JSON.parse(raw);
+      if (!parsed.schemaVersion) parsed.schemaVersion = 1;
+      if (!parsed.cabinetDefault || !Array.isArray(parsed.cabinetDefault.lines)) {
+        parsed.cabinetDefault = { lines: _bcDefaultCabinetLines() };
+      }
+      if (!parsed.clients || typeof parsed.clients !== "object") parsed.clients = {};
+      return parsed;
+    } catch (e) {
+      console.warn("[dsn-facturation] localStorage corrupted, resetting", e);
+      return { schemaVersion: 1, cabinetDefault: { lines: _bcDefaultCabinetLines() }, clients: {} };
+    }
+  }
+
+  function bcSaveStore(store) {
+    try {
+      localStorage.setItem(BC_STORE_KEY, JSON.stringify(store));
+    } catch (e) {
+      console.error("[dsn-facturation] failed to save localStorage", e);
+    }
+  }
+
+  function bcGetCabinetDefault() { return bcLoadStore().cabinetDefault; }
+
+  function bcSetCabinetDefault(lines) {
+    var store = bcLoadStore();
+    store.cabinetDefault = { lines: bcCloneLines(lines) };
+    bcSaveStore(store);
+  }
+
+  function bcCloneLines(lines) {
+    return lines.map(function (l) { return Object.assign({}, l); });
+  }
+
+  function bcNowIso() { return new Date().toISOString(); }
+
+  function bcGetOrInitClient(siret, label, siren) {
+    var store = bcLoadStore();
+    if (!store.clients[siret]) {
+      store.clients[siret] = {
+        label: label || siret,
+        siren: siren || null,
+        createdAt: bcNowIso(),
+        lastSeenAt: bcNowIso(),
+        scope: null,
+        scopeLockedAt: null,
+        template: { lines: bcCloneLines(store.cabinetDefault.lines) },
+        establishmentTemplates: {},
+        controls: {},
+      };
+      bcSaveStore(store);
+    } else {
+      store.clients[siret].lastSeenAt = bcNowIso();
+      if (label) store.clients[siret].label = label;
+      if (siren) store.clients[siret].siren = siren;
+      bcSaveStore(store);
+    }
+    return store.clients[siret];
+  }
+
+  function bcGetClient(siret) {
+    return bcLoadStore().clients[siret] || null;
+  }
+
+  function bcSetClientScope(siret, scope) {
+    var store = bcLoadStore();
+    if (!store.clients[siret]) return;
+    store.clients[siret].scope = scope;
+    store.clients[siret].scopeLockedAt = bcNowIso();
+    bcSaveStore(store);
+  }
+
+  function bcGetClientTemplate(siret, scopeKey) {
+    var store = bcLoadStore();
+    var client = store.clients[siret];
+    if (!client) return null;
+    if (scopeKey && scopeKey.indexOf("etab:") === 0) {
+      var etabId = scopeKey.slice(5);
+      if (!client.establishmentTemplates) client.establishmentTemplates = {};
+      if (!client.establishmentTemplates[etabId]) {
+        // Initialize from client template (which itself was initialized from cabinetDefault)
+        client.establishmentTemplates[etabId] = { lines: bcCloneLines(client.template.lines) };
+        bcSaveStore(store);
+      }
+      return client.establishmentTemplates[etabId];
+    }
+    return client.template;
+  }
+
+  function bcSetClientTemplate(siret, scopeKey, lines) {
+    var store = bcLoadStore();
+    var client = store.clients[siret];
+    if (!client) return;
+    if (scopeKey && scopeKey.indexOf("etab:") === 0) {
+      var etabId = scopeKey.slice(5);
+      if (!client.establishmentTemplates) client.establishmentTemplates = {};
+      client.establishmentTemplates[etabId] = { lines: bcCloneLines(lines) };
+    } else {
+      client.template = { lines: bcCloneLines(lines) };
+    }
+    bcSaveStore(store);
+  }
+
+  // ── Billing-control: fingerprint ─────────────────────────
+  async function bcComputeFileSha256(file) {
+    var buf = await file.arrayBuffer();
+    var hash = await crypto.subtle.digest("SHA-256", buf);
+    var bytes = new Uint8Array(hash);
+    var hex = "";
+    for (var i = 0; i < bytes.length; i++) {
+      hex += bytes[i].toString(16).padStart(2, "0");
+    }
+    return hex;
+  }
+
+  function bcExtractFingerprintMeta(payload, file, sha256) {
+    var decl = (payload && payload.declaration) || {};
+    return {
+      fileSha256: sha256,
+      fileName: file.name || null,
+      fileSize: file.size || null,
+      dsnId: decl.dsn_id || null,
+      declarationKindCode: decl.declaration_kind_code || null,
+      declarationRankCode: decl.declaration_rank_code || null,
+    };
+  }
+
+  // ── Billing-control: snapshot layer ──────────────────────
+  function bcListControls(siret, month, scopeKey) {
+    var client = bcGetClient(siret);
+    if (!client || !client.controls || !client.controls[month] || !client.controls[month][scopeKey]) return [];
+    return client.controls[month][scopeKey];
+  }
+
+  function bcFindControlByFingerprint(siret, month, scopeKey, sha256) {
+    return bcListControls(siret, month, scopeKey).find(function (c) {
+      return c.fingerprint && c.fingerprint.fileSha256 === sha256;
+    }) || null;
+  }
+
+  function bcGetLatestControl(siret, month, scopeKey) {
+    var list = bcListControls(siret, month, scopeKey);
+    return list.find(function (c) { return c.isLatest; }) || list[list.length - 1] || null;
+  }
+
+  function bcGetControlById(siret, controlId) {
+    var client = bcGetClient(siret);
+    if (!client || !client.controls) return null;
+    for (var month in client.controls) {
+      for (var sk in client.controls[month]) {
+        var found = client.controls[month][sk].find(function (c) { return c.controlId === controlId; });
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+
+  function bcShortHash(s) {
+    var h = 0;
+    for (var i = 0; i < s.length; i++) {
+      h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    }
+    return Math.abs(h).toString(36).slice(0, 8);
+  }
+
+  function bcCreateControlSnapshot(siret, month, scopeKey, payload, fingerprintMeta, establishmentId) {
+    var store = bcLoadStore();
+    var client = store.clients[siret];
+    if (!client) return null;
+    if (!client.controls) client.controls = {};
+    if (!client.controls[month]) client.controls[month] = {};
+    if (!client.controls[month][scopeKey]) client.controls[month][scopeKey] = [];
+
+    // Resolve template
+    var template;
+    if (scopeKey.indexOf("etab:") === 0) {
+      var etabId = scopeKey.slice(5);
+      if (!client.establishmentTemplates) client.establishmentTemplates = {};
+      if (!client.establishmentTemplates[etabId]) {
+        client.establishmentTemplates[etabId] = { lines: bcCloneLines(client.template.lines) };
+      }
+      template = client.establishmentTemplates[etabId];
+    } else {
+      template = client.template;
+    }
+
+    // Pick the right payroll_tracking
+    var pt;
+    if (scopeKey === "global") {
+      pt = payload.global_payroll_tracking || {};
+    } else {
+      var etabId2 = scopeKey.slice(5);
+      var est = (payload.establishments || []).find(function (e) { return e.identity && e.identity.siret === etabId2; });
+      pt = (est && est.payroll_tracking) || {};
+    }
+
+    var newLines = template.lines.map(function (line) {
+      var snap = {
+        id: line.id,
+        kind: line.kind,
+        label: line.label,
+        unitPrice: Number(line.unitPrice) || 0,
+      };
+      if (line.kind === "dsn") {
+        snap.source = line.source;
+        snap.qty = bcResolveQty(line.source, pt);
+      } else {
+        snap.qty = Number(line.qty) || 0;
+      }
+      snap.theoreticalTotal = (Number(snap.qty) || 0) * (Number(snap.unitPrice) || 0);
+      return snap;
+    });
+
+    // Demote any previous latest in this month×scope
+    client.controls[month][scopeKey].forEach(function (c) { c.isLatest = false; });
+
+    var seed = month + "|" + scopeKey + "|" + (fingerprintMeta.fileSha256 || "");
+    var control = {
+      controlId: "ctrl_" + month + "_" + scopeKey.replace(/[^a-z0-9]/gi, "") + "_" + bcShortHash(seed + Math.random()),
+      isLatest: true,
+      month: month,
+      scope: scopeKey === "global" ? "global" : "by_establishment",
+      establishmentId: establishmentId || null,
+      createdAt: bcNowIso(),
+      updatedAt: bcNowIso(),
+      fingerprint: fingerprintMeta,
+      lines: newLines,
+    };
+    client.controls[month][scopeKey].push(control);
+    bcSaveStore(store);
+    return control;
+  }
+
+  function bcMarkAsLatest(siret, month, scopeKey, controlId) {
+    var store = bcLoadStore();
+    var client = store.clients[siret];
+    if (!client || !client.controls || !client.controls[month] || !client.controls[month][scopeKey]) return;
+    client.controls[month][scopeKey].forEach(function (c) {
+      c.isLatest = (c.controlId === controlId);
+    });
+    bcSaveStore(store);
+  }
+
+  function bcUpdateControlLine(siret, controlId, lineId, patch) {
+    var store = bcLoadStore();
+    var client = store.clients[siret];
+    if (!client || !client.controls) return;
+    for (var month in client.controls) {
+      for (var sk in client.controls[month]) {
+        var ctl = client.controls[month][sk].find(function (c) { return c.controlId === controlId; });
+        if (!ctl) continue;
+        var line = ctl.lines.find(function (l) { return l.id === lineId; });
+        if (!line) return;
+        Object.assign(line, patch);
+        line.theoreticalTotal = (Number(line.qty) || 0) * (Number(line.unitPrice) || 0);
+        ctl.updatedAt = bcNowIso();
+        bcSaveStore(store);
+        return;
+      }
+    }
+  }
+
+  function bcAddControlLine(siret, controlId, line) {
+    var store = bcLoadStore();
+    var client = store.clients[siret];
+    if (!client || !client.controls) return;
+    for (var month in client.controls) {
+      for (var sk in client.controls[month]) {
+        var ctl = client.controls[month][sk].find(function (c) { return c.controlId === controlId; });
+        if (!ctl) continue;
+        ctl.lines.push(line);
+        ctl.updatedAt = bcNowIso();
+        bcSaveStore(store);
+        return;
+      }
+    }
+  }
+
+  // Apply the freshly-saved client template to the currently-displayed
+  // control: update PU (and label) on matching ids, add new lines, preserve
+  // any line the user has added ad-hoc via "Ajouter une ligne".
+  function bcApplyTemplateToCurrentControl() {
+    if (!state.currentSiret || !state.currentControlId || !state.data) return;
+    var template = bcGetClientTemplate(state.currentSiret, state.currentScopeKey);
+    if (!template) return;
+    var pt = (state.currentScope === "by_establishment" && state.currentEstablishmentId)
+      ? (((state.data.establishments || []).find(function (e) { return e.identity && e.identity.siret === state.currentEstablishmentId; }) || {}).payroll_tracking)
+      : (state.data.global_payroll_tracking || {});
+
+    var control = bcGetControlById(state.currentSiret, state.currentControlId);
+    if (!control) return;
+    var existingIds = new Set(control.lines.map(function (l) { return l.id; }));
+
+    template.lines.forEach(function (tl) {
+      if (existingIds.has(tl.id)) {
+        // Update label + PU on matching id
+        var patch = { label: tl.label, unitPrice: Number(tl.unitPrice) || 0 };
+        bcUpdateControlLine(state.currentSiret, state.currentControlId, tl.id, patch);
+      } else {
+        // Add the line to the current control
+        var newLine = {
+          id: tl.id,
+          kind: tl.kind,
+          label: tl.label,
+          unitPrice: Number(tl.unitPrice) || 0,
+        };
+        if (tl.kind === "dsn") {
+          newLine.source = tl.source;
+          newLine.qty = bcResolveQty(tl.source, pt);
+        } else {
+          newLine.qty = Number(tl.qty) || 0;
+        }
+        newLine.theoreticalTotal = (Number(newLine.qty) || 0) * (Number(newLine.unitPrice) || 0);
+        bcAddControlLine(state.currentSiret, state.currentControlId, newLine);
+      }
+    });
+  }
+
+  function bcRemoveControlLine(siret, controlId, lineId) {
+    var store = bcLoadStore();
+    var client = store.clients[siret];
+    if (!client || !client.controls) return;
+    for (var month in client.controls) {
+      for (var sk in client.controls[month]) {
+        var ctl = client.controls[month][sk].find(function (c) { return c.controlId === controlId; });
+        if (!ctl) continue;
+        ctl.lines = ctl.lines.filter(function (l) { return l.id !== lineId; });
+        ctl.updatedAt = bcNowIso();
+        bcSaveStore(store);
+        return;
+      }
+    }
+  }
+
+  // ── Billing-control: quantity resolution ─────────────────
+  function bcResolveQty(source, payrollTracking) {
+    if (!source || !payrollTracking) return 0;
+    if (source.indexOf("absence_motif:") === 0) {
+      var motifCode = source.slice("absence_motif:".length);
+      var details = payrollTracking.billable_absence_details || [];
+      return details.filter(function (d) { return String(d.motif_code) === String(motifCode); }).length;
+    }
+    var v = payrollTracking[source];
+    return Number(v) || 0;
+  }
+
+  // ── Billing-control: helpers ─────────────────────────────
+  function bcScopeKeyForState() {
+    if (state.currentScope === "by_establishment" && state.currentEstablishmentId) {
+      return "etab:" + state.currentEstablishmentId;
+    }
+    return "global";
+  }
+
+  function bcMonthFromPayload(payload) {
+    var m = payload && payload.declaration && payload.declaration.month;
+    return m || null;
+  }
+
+  function bcFormatMonthLabel(month) {
+    if (!month || !/^\d{4}-\d{2}$/.test(month)) return month || "";
+    var parts = month.split("-");
+    var y = parts[0], mIdx = parseInt(parts[1], 10) - 1;
+    return MONTH_NAMES[mIdx] + " " + y;
+  }
+
+  function bcFormatEuro(v) {
+    if (v === null || v === undefined || v === "") return "";
+    var n = Number(v);
+    if (!isFinite(n)) return "";
+    return n.toLocaleString("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function bcFormatDate(iso) {
+    if (!iso) return "";
+    var d = new Date(iso);
+    return d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
+  }
+
+  function bcAvailableSourcesForControl(control, currentPayloadTracking) {
+    // Built-in DSN counters
+    var allSources = [
+      { source: "bulletins",                 label: "Bulletins" },
+      { source: "billable_entries",          label: "Entr\u00e9es" },
+      { source: "billable_exits",            label: "Sorties" },
+      { source: "billable_absence_events",   label: "Absences (toutes)" },
+      { source: "exceptional_events_count", label: "\u00c9v\u00e9nements exceptionnels" },
+      { source: "dsn_anomalies_count",      label: "Alertes DSN \u00e0 traiter" },
+    ];
+    // Motifs from current DSN + all known motifs
+    var motifsInDsn = new Set();
+    ((currentPayloadTracking && currentPayloadTracking.billable_absence_details) || []).forEach(function (d) {
+      motifsInDsn.add(String(d.motif_code));
+    });
+    Object.keys(ABSENCE_MOTIF_LABELS).forEach(function (code) {
+      allSources.push({
+        source: "absence_motif:" + code,
+        label: "Motif d\u2019absence : " + ABSENCE_MOTIF_LABELS[code] + (motifsInDsn.has(code) ? " (pr\u00e9sent dans la DSN)" : ""),
+      });
+    });
+    var existingSources = new Set((control && control.lines || []).filter(function (l) { return l.kind === "dsn"; }).map(function (l) { return l.source; }));
+    return allSources.filter(function (s) { return !existingSources.has(s.source); });
+  }
 
   // ── DOM refs (cached once) ───────────────────────────────
   var $body = document.body;
@@ -238,10 +672,46 @@
   var $ptExitsNames = document.getElementById("pt-exits-names");
   var $ptAbsencesNames = document.getElementById("pt-absences-names");
 
-  // Contribution comparisons
+  // Contribution comparisons (legacy — DOM removed, refs stay null)
   var $ccTrustBanner = document.getElementById("cc-trust-banner");
   var $contribFamilyTabs = document.getElementById("contrib-family-tabs");
   var $contribFamilyPanels = document.getElementById("contrib-family-panels");
+
+  // Billing-control DOM
+  var $bcBanner = document.getElementById("bc-banner");
+  var $bcBannerTitle = document.getElementById("bc-banner-title");
+  var $bcBannerSub = document.getElementById("bc-banner-sub");
+  var $bcEditTemplateBtn = document.getElementById("bc-edit-template-btn");
+  var $bcEditCabinetDefaultBtn = document.getElementById("bc-edit-cabinet-default-btn");
+  var $bcScope = document.getElementById("bc-scope");
+  var $bcControlsSwitcher = document.getElementById("bc-controls-switcher");
+  var $bcControlsSwitcherList = document.getElementById("bc-controls-switcher-list");
+  var $bcStaleBanner = document.getElementById("bc-stale-banner");
+  var $bcSection = document.getElementById("bc-section");
+  var $bcTables = document.getElementById("bc-tables");
+  var $bcTotals = document.getElementById("bc-totals");
+  var $bcAddLineBtn = document.getElementById("bc-add-line-btn");
+  var $bcEventsSection = document.getElementById("bc-events-section");
+  var $bcEvents = document.getElementById("bc-events");
+  var $bcScopeModal = document.getElementById("bc-scope-modal");
+  var $bcScopeModalIntro = document.getElementById("bc-scope-modal-intro");
+  var $bcMismatchModal = document.getElementById("bc-mismatch-modal");
+  var $bcMismatchIntro = document.getElementById("bc-mismatch-intro");
+  var $bcMismatchList = document.getElementById("bc-mismatch-list");
+  var $bcAddLineModal = document.getElementById("bc-add-line-modal");
+  var $bcAddLineSources = document.getElementById("bc-add-line-sources");
+  var $bcAddLineFreeForm = document.getElementById("bc-add-line-free-form");
+  var $bcAddLineFreeLabel = document.getElementById("bc-add-line-free-label");
+  var $bcAddLineFreeQty = document.getElementById("bc-add-line-free-qty");
+  var $bcAddLineFreePu = document.getElementById("bc-add-line-free-pu");
+  var $bcTemplateModal = document.getElementById("bc-template-modal");
+  var $bcTemplateEditor = document.getElementById("bc-template-editor");
+  var $bcTemplateAddLine = document.getElementById("bc-template-add-line");
+  var $bcTemplateSave = document.getElementById("bc-template-save");
+  var $bcCabinetDefaultModal = document.getElementById("bc-cabinet-default-modal");
+  var $bcCabinetDefaultEditor = document.getElementById("bc-cabinet-default-editor");
+  var $bcCabinetDefaultAddLine = document.getElementById("bc-cabinet-default-add-line");
+  var $bcCabinetDefaultSave = document.getElementById("bc-cabinet-default-save");
 
   // ── Formatting helpers ───────────────────────────────────
 
@@ -649,25 +1119,11 @@
       renderEstablishmentDetail(est.identity);
     }
 
-    renderSummaryCards(counts);
-    renderRetirementTable(counts);
-    renderContractTable(counts);
-    renderAmounts(amounts);
-    renderExtras(extras);
+    // dsn-facturation: legacy renderers (analyse sociale, summary cards,
+    // payroll tracking, contribution comparisons) are intentionally skipped —
+    // their DOM was removed. The billing-control flow handles its own render.
     renderWarnings(quality);
-
-    var sa, pt;
-    if (state.scope === "global") {
-      sa = d.global_social_analysis;
-      pt = d.global_payroll_tracking;
-    } else {
-      var activeEst = d.establishments[state.activeEstIdx];
-      sa = activeEst.social_analysis;
-      pt = activeEst.payroll_tracking;
-    }
-    renderSocialAnalysis(sa);
-    renderPayrollTracking(pt);
-    renderContributionComparisons();
+    bcRender();
   }
 
   function renderHeader(d) {
@@ -1910,12 +2366,23 @@
   }
 
   async function upload(file) {
+    // Fingerprint computed on the raw file BEFORE extraction
+    var sha256;
+    try {
+      sha256 = await bcComputeFileSha256(file);
+    } catch (e) {
+      console.error("[dsn-facturation] sha256 failed", e);
+      sha256 = null;
+    }
+
     var b64 = await fileToBase64(file);
     setState({
       phase: "uploading",
       hasUploadAttempted: true,
       lastUploadFilename: file.name || null,
       lastUploadFileBase64: b64,
+      fileSha256: sha256,
+      fileSize: file.size || null,
     });
 
     var form = new FormData();
@@ -1933,6 +2400,8 @@
         return;
       }
 
+      // Initial state set; bcResolveAfterExtract will branch on scope choice
+      // and fingerprint matching, possibly opening modals before render.
       var initialTab = getInitialContributionTab(json);
       setState({
         phase: "results",
@@ -1944,12 +2413,100 @@
         feedbackSubmitting: false,
         feedbackSuccess: false,
       });
+
+      bcResolveAfterExtract(json, file, sha256);
     } catch (err) {
       setState({
         phase: "error",
         error: { detail: "Erreur r\u00e9seau\u00a0: " + err.message, warnings: [] },
       });
     }
+  }
+
+  // ── Billing-control: post-extract resolution ─────────────
+  // Decides scope (with optional blocking modal), then resolves the control:
+  //   - fingerprint match → load existing
+  //   - no match but other controls exist → mismatch modal
+  //   - no controls at all → create snapshot from template
+  function bcResolveAfterExtract(payload, file, sha256) {
+    var siret = (payload.company && payload.company.siret) || null;
+    var siren = (payload.company && payload.company.siren) || null;
+    var label = (payload.company && payload.company.name) || siret || "Client";
+    var month = bcMonthFromPayload(payload);
+
+    if (!siret || !month) {
+      // Fall back: no client persistence possible
+      setState({ currentSiret: null, currentMonth: null });
+      bcRender();
+      return;
+    }
+
+    bcGetOrInitClient(siret, label, siren);
+    var client = bcGetClient(siret);
+    var establishments = payload.establishments || [];
+
+    // Scope decision
+    if (establishments.length > 1 && !client.scope) {
+      // Need explicit choice
+      setState({
+        currentSiret: siret,
+        currentMonth: month,
+        pendingScopeChoice: { siret: siret, establishments: establishments, payload: payload, file: file, sha256: sha256 },
+      });
+      bcOpenScopeModal(establishments.length);
+      return;
+    }
+
+    var scope = client.scope || "global";
+    setState({
+      currentSiret: siret,
+      currentMonth: month,
+      currentScope: scope,
+      currentEstablishmentId: scope === "by_establishment" ? (establishments[0] && establishments[0].identity && establishments[0].identity.siret) : null,
+      currentScopeKey: scope === "by_establishment" ? ("etab:" + (establishments[0] && establishments[0].identity && establishments[0].identity.siret)) : "global",
+    });
+
+    bcResolveControl(payload, file, sha256);
+  }
+
+  function bcResolveControl(payload, file, sha256) {
+    var siret = state.currentSiret;
+    var month = state.currentMonth;
+    var scopeKey = state.currentScopeKey;
+
+    var matching = sha256 && bcFindControlByFingerprint(siret, month, scopeKey, sha256);
+    if (matching) {
+      // Silent reload
+      setState({ currentControlId: matching.controlId, pendingMismatch: null });
+      bcRender();
+      return;
+    }
+
+    var existing = bcListControls(siret, month, scopeKey);
+    if (existing.length > 0) {
+      // Mismatch — block until user chooses
+      setState({
+        pendingMismatch: {
+          siret: siret,
+          month: month,
+          scopeKey: scopeKey,
+          payload: payload,
+          file: file,
+          sha256: sha256,
+          uploadedFingerprint: bcExtractFingerprintMeta(payload, file, sha256),
+          existingControls: existing,
+        },
+      });
+      bcOpenMismatchModal();
+      return;
+    }
+
+    // Fresh: create new snapshot from template
+    var meta = bcExtractFingerprintMeta(payload, file, sha256);
+    var establishmentId = state.currentScope === "by_establishment" ? state.currentEstablishmentId : null;
+    var control = bcCreateControlSnapshot(siret, month, scopeKey, payload, meta, establishmentId);
+    setState({ currentControlId: control && control.controlId || null, pendingMismatch: null });
+    bcRender();
   }
 
   // ── Reset ────────────────────────────────────────────────
@@ -1974,6 +2531,17 @@
       feedbackOpen: false,
       feedbackSubmitting: false,
       feedbackSuccess: false,
+      // Reset billing-control transient state (localStorage persists)
+      fileSha256: null,
+      fileSize: null,
+      currentSiret: null,
+      currentMonth: null,
+      currentScope: "global",
+      currentScopeKey: "global",
+      currentEstablishmentId: null,
+      currentControlId: null,
+      pendingMismatch: null,
+      pendingScopeChoice: null,
     });
   }
 
@@ -2049,7 +2617,7 @@
     }
   });
 
-  $contribFamilyTabs.addEventListener("click", function (e) {
+  if ($contribFamilyTabs) $contribFamilyTabs.addEventListener("click", function (e) {
     var btn = e.target.closest(".tab-bar__btn");
     if (!btn) return;
     var tab = btn.dataset.tab;
@@ -2057,7 +2625,7 @@
     setState({ activeContributionTab: tab });
   });
 
-  $contribFamilyPanels.addEventListener("click", function (e) {
+  if ($contribFamilyPanels) $contribFamilyPanels.addEventListener("click", function (e) {
     // Slice D: URSSAF CTP-level toggle takes precedence over the card-level
     // toggle because a CTP row lives inside a .contrib-item, so both
     // e.target.closest() calls would match the same click without this guard.
@@ -2128,7 +2696,7 @@
     state.expandedContribItems = updated;
   });
 
-  $contribFamilyPanels.addEventListener("change", function (e) {
+  if ($contribFamilyPanels) $contribFamilyPanels.addEventListener("change", function (e) {
     if (e.target && e.target.dataset && e.target.dataset.action === "toggle-ecarts-filter") {
       setState({ contribFilterEcartsOnly: e.target.checked });
     }
@@ -2176,6 +2744,466 @@
   $dropzone.addEventListener("click", function (e) {
     if (e.target === $browseBtn || e.target === $fileInput) return;
     if (state.phase === "empty") $fileInput.click();
+  });
+
+  // ── Billing-control: render ──────────────────────────────
+
+  function bcRender() {
+    if (state.phase !== "results" || !state.data) return;
+    if (!$bcSection) return; // safety: DOM not present
+    bcRenderStaleBanner();
+    bcRenderControlsSwitcher();
+    bcRenderTables();
+    bcRenderTotals();
+    bcRenderEvents();
+  }
+
+  function bcRenderStaleBanner() {
+    if (!$bcStaleBanner) return;
+    var control = state.currentSiret && state.currentControlId
+      ? bcGetControlById(state.currentSiret, state.currentControlId) : null;
+    $bcStaleBanner.hidden = !(control && control.isLatest === false);
+  }
+
+  function bcRenderControlsSwitcher() {
+    if (!state.currentSiret || !state.currentMonth || !state.currentScopeKey) {
+      $bcControlsSwitcher.hidden = true;
+      return;
+    }
+    var list = bcListControls(state.currentSiret, state.currentMonth, state.currentScopeKey);
+    if (list.length <= 1) {
+      $bcControlsSwitcher.hidden = true;
+      return;
+    }
+    $bcControlsSwitcher.hidden = false;
+    $bcControlsSwitcherList.innerHTML = list.slice().reverse().map(function (c) {
+      var label = "Contr\u00f4le du " + bcFormatDate(c.createdAt);
+      var active = c.controlId === state.currentControlId;
+      var latest = c.isLatest;
+      return '<button type="button" class="bc-controls-switcher__btn ' + (active ? "bc-controls-switcher__btn--active" : "") + '" data-bc-switch-control="' + escapeHtml(c.controlId) + '">'
+        + escapeHtml(label)
+        + (latest ? ' <span class="bc-pill bc-pill--latest">actuel</span>' : ' <span class="bc-pill bc-pill--old">remplac\u00e9</span>')
+        + '</button>';
+    }).join("");
+  }
+
+  function bcRenderTables() {
+    $bcTables.innerHTML = "";
+    var control = state.currentControlId ? bcGetControlById(state.currentSiret, state.currentControlId) : null;
+    if (!control) {
+      $bcTables.innerHTML = '<p class="bc-empty">Aucun contr\u00f4le actif.</p>';
+      return;
+    }
+    $bcTables.appendChild(bcBuildLineTable(control));
+  }
+
+  function bcBuildLineTable(control) {
+    var wrapper = document.createElement("div");
+    wrapper.className = "bc-table-wrapper";
+    var html = '<table class="bc-table">'
+      + '<thead><tr>'
+      + '<th>Ligne</th>'
+      + '<th class="bc-col-num">Quantit\u00e9</th>'
+      + '<th class="bc-col-num">PU HT (\u20ac)</th>'
+      + '<th class="bc-col-num">Total HT</th>'
+      + '<th></th>'
+      + '</tr></thead><tbody>';
+    control.lines.forEach(function (line) {
+      html += bcBuildLineRow(line);
+    });
+    html += '</tbody></table>';
+    wrapper.innerHTML = html;
+    return wrapper;
+  }
+
+  function bcBuildLineRow(line) {
+    var isFree = line.kind === "free";
+    var qtyVal = line.qty != null ? line.qty : "";
+    var puVal = line.unitPrice != null ? line.unitPrice : "";
+    var qtyCell = '<input type="text" inputmode="decimal" class="bc-input bc-input--num" data-bc-line-id="' + escapeHtml(line.id) + '" data-bc-field="qty" value="' + qtyVal + '">';
+    var puCell = '<input type="text" inputmode="decimal" class="bc-input bc-input--num" data-bc-line-id="' + escapeHtml(line.id) + '" data-bc-field="unitPrice" value="' + puVal + '">';
+    var theoretical = bcFormatEuro(line.theoreticalTotal);
+    var typePill = isFree ? '<span class="bc-pill bc-pill--free">libre</span>' : '<span class="bc-pill bc-pill--dsn">DSN</span>';
+    return '<tr data-bc-row="' + escapeHtml(line.id) + '">'
+      + '<td>' + escapeHtml(line.label) + ' ' + typePill + '</td>'
+      + '<td class="bc-col-num">' + qtyCell + '</td>'
+      + '<td class="bc-col-num">' + puCell + '</td>'
+      + '<td class="bc-col-num bc-theoretical">' + theoretical + '</td>'
+      + '<td class="bc-col-action"><button type="button" class="bc-row-del" data-bc-remove-line="' + escapeHtml(line.id) + '" aria-label="Supprimer la ligne">\u00d7</button></td>'
+      + '</tr>';
+  }
+
+  function bcRenderTotals() {
+    var target = document.getElementById("bc-totals-value");
+    if (!target) return;
+    var control = state.currentControlId ? bcGetControlById(state.currentSiret, state.currentControlId) : null;
+    if (!control) { target.innerHTML = ""; return; }
+    var total = control.lines.reduce(function (s, l) { return s + (Number(l.theoreticalTotal) || 0); }, 0);
+    target.innerHTML = '<span class="bc-total__label">Total HT</span><span class="bc-total__value">' + bcFormatEuro(total) + '</span>';
+  }
+
+  function bcRenderEvents() {
+    var d = state.data;
+    if (!d) { $bcEventsSection.hidden = true; return; }
+    var pt;
+    if (state.currentScope === "by_establishment" && state.currentEstablishmentId) {
+      var est = (d.establishments || []).find(function (e) { return e.identity && e.identity.siret === state.currentEstablishmentId; });
+      pt = (est && est.payroll_tracking) || null;
+    } else {
+      pt = d.global_payroll_tracking || null;
+    }
+    if (!pt) { $bcEventsSection.hidden = true; return; }
+    var entryNames = pt.billable_entry_names || [];
+    var exitNames = pt.billable_exit_names || [];
+    var absDetails = pt.billable_absence_details || [];
+    if (entryNames.length === 0 && exitNames.length === 0 && absDetails.length === 0) {
+      $bcEventsSection.hidden = true;
+      return;
+    }
+    $bcEventsSection.hidden = false;
+    $bcEvents.innerHTML = ''
+      + bcEventSection("Entr\u00e9es", entryNames.length, entryNames.map(function (n) {
+          return '<li>' + escapeHtml(n) + '</li>';
+        }).join(""))
+      + bcEventSection("Sorties", exitNames.length, exitNames.map(function (n) {
+          return '<li>' + escapeHtml(n) + '</li>';
+        }).join(""))
+      + bcEventSection("Absences", absDetails.length, absDetails.map(function (d) {
+          return '<li><strong>' + escapeHtml(d.employee_name || "") + '</strong><span class="bc-event-sub">' + escapeHtml(d.motif_label || d.motif_code || "") + '</span></li>';
+        }).join(""));
+  }
+
+  function bcEventSection(title, count, itemsHtml) {
+    return '<section class="bc-event-card">'
+      + '<header class="bc-event-card__head"><strong>' + title + '</strong> <span class="bc-pill">' + count + '</span></header>'
+      + (count > 0
+          ? '<ul class="bc-event-list">' + itemsHtml + '</ul>'
+          : '<p class="bc-empty">Aucun</p>')
+      + '</section>';
+  }
+
+  // ── Billing-control: modals ──────────────────────────────
+
+  function bcOpenScopeModal(nbEstablishments) {
+    $bcScopeModalIntro.textContent = nbEstablishments + " \u00e9tablissements d\u00e9tect\u00e9s. Souhaitez-vous facturer en vue globale (somme) ou par \u00e9tablissement (grilles s\u00e9par\u00e9es)\u00a0?";
+    if (typeof $bcScopeModal.showModal === "function") $bcScopeModal.showModal();
+  }
+
+  function bcOpenMismatchModal() {
+    var pm = state.pendingMismatch;
+    if (!pm) return;
+    var client = bcGetClient(pm.siret);
+    var monthLabel = bcFormatMonthLabel(pm.month);
+    $bcMismatchIntro.textContent = "Une d\u00e9claration diff\u00e9rente a d\u00e9j\u00e0 \u00e9t\u00e9 contr\u00f4l\u00e9e pour " + (client && client.label || pm.siret) + " \u2014 " + monthLabel + ". Le fichier d\u00e9pos\u00e9 ne correspond pas aux contr\u00f4les existants.";
+    var rows = pm.existingControls.map(function (c) {
+      return '<li><span>Contr\u00f4le pr\u00e9c\u00e9dent : <strong>' + escapeHtml(c.fingerprint && c.fingerprint.fileName || "fichier inconnu") + '</strong></span><br><small>cr\u00e9\u00e9 le ' + bcFormatDate(c.createdAt) + ', SHA-256 ' + escapeHtml((c.fingerprint && c.fingerprint.fileSha256 || "").slice(0, 12)) + '\u2026</small></li>';
+    });
+    rows.push('<li><span>Fichier actuel : <strong>' + escapeHtml(pm.uploadedFingerprint.fileName || "") + '</strong></span><br><small>SHA-256 ' + escapeHtml((pm.uploadedFingerprint.fileSha256 || "").slice(0, 12)) + '\u2026</small></li>');
+    $bcMismatchList.innerHTML = rows.join("");
+    if (typeof $bcMismatchModal.showModal === "function") $bcMismatchModal.showModal();
+  }
+
+  function bcOpenAddLineModal() {
+    var control = state.currentControlId ? bcGetControlById(state.currentSiret, state.currentControlId) : null;
+    if (!control) return;
+    var pt = (state.currentScope === "by_establishment" && state.currentEstablishmentId)
+      ? (((state.data.establishments || []).find(function (e) { return e.identity && e.identity.siret === state.currentEstablishmentId; }) || {}).payroll_tracking)
+      : (state.data.global_payroll_tracking || {});
+    var sources = bcAvailableSourcesForControl(control, pt);
+    $bcAddLineSources.innerHTML = sources.length === 0
+      ? '<li class="bc-empty">Toutes les sources DSN sont d\u00e9j\u00e0 dans la grille.</li>'
+      : sources.map(function (s) {
+          return '<li><button type="button" data-bc-add-source="' + escapeHtml(s.source) + '" data-bc-add-label="' + escapeHtml(s.label.replace(/ \(pr\u00e9sent dans la DSN\)$/, "")) + '">' + escapeHtml(s.label) + '</button></li>';
+        }).join("");
+    bcSwitchAddLineTab(state.addLineModalTab || "dsn");
+    if (typeof $bcAddLineModal.showModal === "function") $bcAddLineModal.showModal();
+  }
+
+  function bcSwitchAddLineTab(tab) {
+    state.addLineModalTab = tab;
+    document.querySelectorAll(".bc-add-line__tab").forEach(function (b) {
+      b.classList.toggle("bc-add-line__tab--active", b.dataset.bcAddLineTab === tab);
+    });
+    document.getElementById("bc-add-line-panel-dsn").hidden = (tab !== "dsn");
+    document.getElementById("bc-add-line-panel-free").hidden = (tab !== "free");
+  }
+
+  function bcOpenTemplateModal() {
+    if (!state.currentSiret) return;
+    bcRenderTemplateEditor("template");
+    if (typeof $bcTemplateModal.showModal === "function") $bcTemplateModal.showModal();
+  }
+
+  function bcOpenCabinetDefaultModal() {
+    bcRenderTemplateEditor("cabinetDefault");
+    if (typeof $bcCabinetDefaultModal.showModal === "function") $bcCabinetDefaultModal.showModal();
+  }
+
+  // Holds the in-progress edit buffer for the modal templates
+  var bcTemplateBuffer = { kind: null, lines: [] };
+
+  function bcRenderTemplateEditor(kind) {
+    var lines;
+    if (kind === "cabinetDefault") {
+      lines = bcGetCabinetDefault().lines;
+    } else {
+      var template = bcGetClientTemplate(state.currentSiret, state.currentScopeKey);
+      lines = template ? template.lines : [];
+    }
+    bcTemplateBuffer = { kind: kind, lines: lines.map(function (l) { return Object.assign({}, l); }) };
+    var editor = (kind === "cabinetDefault") ? $bcCabinetDefaultEditor : $bcTemplateEditor;
+    editor.innerHTML = bcBuildTemplateEditorHtml(bcTemplateBuffer.lines);
+  }
+
+  function bcBuildTemplateEditorHtml(lines) {
+    if (lines.length === 0) return '<p class="bc-empty">Aucune ligne. Cliquez "+ Ligne" pour ajouter.</p>';
+    return '<table class="bc-table bc-table--editor">'
+      + '<thead><tr><th>Type</th><th>Libell\u00e9</th><th>Source / Qt\u00e9</th><th>PU HT (\u20ac)</th><th></th></tr></thead>'
+      + '<tbody>'
+      + lines.map(function (line, i) {
+          var typePill = line.kind === "free" ? '<span class="bc-pill bc-pill--free">libre</span>' : '<span class="bc-pill bc-pill--dsn">DSN</span>';
+          var sourceCell;
+          if (line.kind === "free") {
+            sourceCell = '<input type="number" step="any" class="bc-input" data-bc-tpl-idx="' + i + '" data-bc-tpl-field="qty" value="' + (line.qty != null ? line.qty : 1) + '">';
+          } else {
+            sourceCell = bcBuildSourceSelect(i, line.source);
+          }
+          return '<tr>'
+            + '<td>' + typePill + '</td>'
+            + '<td><input type="text" class="bc-input" data-bc-tpl-idx="' + i + '" data-bc-tpl-field="label" value="' + escapeHtml(line.label || "") + '"></td>'
+            + '<td>' + sourceCell + '</td>'
+            + '<td><input type="number" step="0.01" class="bc-input" data-bc-tpl-idx="' + i + '" data-bc-tpl-field="unitPrice" value="' + (line.unitPrice != null ? line.unitPrice : 0) + '"></td>'
+            + '<td><button type="button" class="bc-row-del" data-bc-tpl-remove="' + i + '" aria-label="Supprimer">\u00d7</button></td>'
+            + '</tr>';
+        }).join("")
+      + '</tbody></table>';
+  }
+
+  function bcBuildSourceSelect(idx, currentSource) {
+    var opts = [
+      { value: "bulletins",                label: "Bulletins" },
+      { value: "billable_entries",         label: "Entr\u00e9es" },
+      { value: "billable_exits",           label: "Sorties" },
+      { value: "billable_absence_events",  label: "Absences (toutes)" },
+      { value: "exceptional_events_count", label: "\u00c9v\u00e9nements exceptionnels" },
+      { value: "dsn_anomalies_count",      label: "Alertes DSN \u00e0 traiter" },
+    ];
+    Object.keys(ABSENCE_MOTIF_LABELS).forEach(function (code) {
+      opts.push({ value: "absence_motif:" + code, label: "Motif : " + ABSENCE_MOTIF_LABELS[code] });
+    });
+    return '<select class="bc-input" data-bc-tpl-idx="' + idx + '" data-bc-tpl-field="source">'
+      + opts.map(function (o) {
+          return '<option value="' + escapeHtml(o.value) + '"' + (o.value === currentSource ? " selected" : "") + '>' + escapeHtml(o.label) + '</option>';
+        }).join("")
+      + '</select>';
+  }
+
+  function bcTemplateEditorAddLine(kind) {
+    var defaultLine = (kind === "free")
+      ? { id: "free-" + Date.now(), kind: "free", label: "Nouvelle ligne", qty: 1, unitPrice: 0 }
+      : { id: "dsn-" + Date.now(), kind: "dsn",  label: "Bulletins", source: "bulletins", unitPrice: 0 };
+    bcTemplateBuffer.lines.push(defaultLine);
+    var editor = (bcTemplateBuffer.kind === "cabinetDefault") ? $bcCabinetDefaultEditor : $bcTemplateEditor;
+    editor.innerHTML = bcBuildTemplateEditorHtml(bcTemplateBuffer.lines);
+  }
+
+  // ── Billing-control: wiring ──────────────────────────────
+
+  // Inline edits in the billing table (PU, qty for free lines, billed amount)
+  function bcParseNumber(raw) {
+    if (raw === "" || raw == null) return 0;
+    var s = String(raw).trim().replace(/\s/g, "").replace(",", ".");
+    var n = parseFloat(s);
+    return isFinite(n) ? n : 0;
+  }
+
+  $bcTables.addEventListener("change", function (e) {
+    var t = e.target;
+    if (!t.dataset || !t.dataset.bcLineId) return;
+    var lineId = t.dataset.bcLineId;
+    var field = t.dataset.bcField;
+    var patch = {};
+    if (field === "qty" || field === "unitPrice") {
+      patch[field] = bcParseNumber(t.value);
+    }
+    bcUpdateControlLine(state.currentSiret, state.currentControlId, lineId, patch);
+    bcRender();
+  });
+
+  // Remove line + switch control
+  $bcTables.addEventListener("click", function (e) {
+    var t = e.target;
+    if (t.dataset && t.dataset.bcRemoveLine) {
+      bcRemoveControlLine(state.currentSiret, state.currentControlId, t.dataset.bcRemoveLine);
+      bcRender();
+    }
+  });
+
+  $bcControlsSwitcher.addEventListener("click", function (e) {
+    var t = e.target.closest("[data-bc-switch-control]");
+    if (!t) return;
+    setState({ currentControlId: t.dataset.bcSwitchControl });
+    bcRender();
+  });
+
+  $bcAddLineBtn.addEventListener("click", bcOpenAddLineModal);
+
+  $bcAddLineModal.addEventListener("click", function (e) {
+    var t = e.target;
+    if (t.id === "bc-add-line-close") { $bcAddLineModal.close(); return; }
+    if (t.dataset && t.dataset.bcAddLineTab) { bcSwitchAddLineTab(t.dataset.bcAddLineTab); return; }
+    if (t.dataset && t.dataset.bcAddSource) {
+      var source = t.dataset.bcAddSource;
+      var label = t.dataset.bcAddLabel || source;
+      var newLine = {
+        id: "ln-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+        kind: "dsn",
+        label: label,
+        source: source,
+        unitPrice: 0,
+      };
+      // Resolve qty from current payload
+      var pt = (state.currentScope === "by_establishment" && state.currentEstablishmentId)
+        ? (((state.data.establishments || []).find(function (e) { return e.identity && e.identity.siret === state.currentEstablishmentId; }) || {}).payroll_tracking)
+        : (state.data.global_payroll_tracking || {});
+      newLine.qty = bcResolveQty(source, pt);
+      newLine.theoreticalTotal = 0;
+      bcAddControlLine(state.currentSiret, state.currentControlId, newLine);
+      $bcAddLineModal.close();
+      bcRender();
+    }
+  });
+
+  function bcUpdateFreePreview() {
+    var el = document.getElementById("bc-add-line-free-preview");
+    if (!el) return;
+    var qty = bcParseNumber($bcAddLineFreeQty.value);
+    var pu = bcParseNumber($bcAddLineFreePu.value);
+    el.textContent = bcFormatEuro(qty * pu);
+  }
+  $bcAddLineFreeQty.addEventListener("input", bcUpdateFreePreview);
+  $bcAddLineFreePu.addEventListener("input", bcUpdateFreePreview);
+
+  $bcAddLineFreeForm.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var label = ($bcAddLineFreeLabel.value || "").trim();
+    var qty = bcParseNumber($bcAddLineFreeQty.value);
+    var pu = bcParseNumber($bcAddLineFreePu.value);
+    if (!label) { return; }
+    var newLine = {
+      id: "ln-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6),
+      kind: "free",
+      label: label,
+      qty: qty,
+      unitPrice: pu,
+      theoreticalTotal: qty * pu,
+    };
+    bcAddControlLine(state.currentSiret, state.currentControlId, newLine);
+    $bcAddLineFreeLabel.value = "";
+    $bcAddLineFreeQty.value = "1";
+    $bcAddLineFreePu.value = "0";
+    bcUpdateFreePreview();
+    $bcAddLineModal.close();
+    bcRender();
+  });
+
+  // Scope modal choice
+  $bcScopeModal.addEventListener("click", function (e) {
+    var t = e.target.closest("[data-bc-scope-choice]");
+    if (!t) return;
+    var choice = t.dataset.bcScopeChoice;
+    var ps = state.pendingScopeChoice;
+    if (!ps) { $bcScopeModal.close(); return; }
+    bcSetClientScope(ps.siret, choice);
+    var establishmentId = (choice === "by_establishment" && ps.establishments[0] && ps.establishments[0].identity)
+      ? ps.establishments[0].identity.siret : null;
+    setState({
+      currentSiret: ps.siret,
+      currentMonth: bcMonthFromPayload(ps.payload),
+      currentScope: choice,
+      currentEstablishmentId: establishmentId,
+      currentScopeKey: choice === "by_establishment" ? ("etab:" + establishmentId) : "global",
+      pendingScopeChoice: null,
+    });
+    $bcScopeModal.close();
+    bcResolveControl(ps.payload, ps.file, ps.sha256);
+  });
+
+  // Mismatch modal choice
+  $bcMismatchModal.addEventListener("click", function (e) {
+    var t = e.target.closest("[data-bc-mismatch-choice]");
+    if (!t) return;
+    var choice = t.dataset.bcMismatchChoice;
+    var pm = state.pendingMismatch;
+    if (!pm) { $bcMismatchModal.close(); return; }
+    if (choice === "new") {
+      var control = bcCreateControlSnapshot(pm.siret, pm.month, pm.scopeKey, pm.payload, pm.uploadedFingerprint, state.currentScope === "by_establishment" ? state.currentEstablishmentId : null);
+      setState({ currentControlId: control && control.controlId, pendingMismatch: null });
+    } else {
+      var latest = bcGetLatestControl(pm.siret, pm.month, pm.scopeKey);
+      setState({ currentControlId: latest && latest.controlId, pendingMismatch: null });
+    }
+    $bcMismatchModal.close();
+    bcRender();
+  });
+
+  // Edit template button
+  $bcEditTemplateBtn.addEventListener("click", bcOpenTemplateModal);
+
+  // Template editor handlers
+  function bcWireTemplateEditor(editorEl) {
+    editorEl.addEventListener("change", function (e) {
+      var t = e.target;
+      if (!t.dataset || t.dataset.bcTplIdx === undefined) return;
+      var idx = parseInt(t.dataset.bcTplIdx, 10);
+      var field = t.dataset.bcTplField;
+      var line = bcTemplateBuffer.lines[idx];
+      if (!line) return;
+      var raw = t.value;
+      if (field === "qty" || field === "unitPrice") {
+        line[field] = raw === "" ? 0 : Number(raw);
+      } else {
+        line[field] = raw;
+      }
+    });
+    editorEl.addEventListener("click", function (e) {
+      var t = e.target;
+      if (t.dataset && t.dataset.bcTplRemove !== undefined) {
+        var idx = parseInt(t.dataset.bcTplRemove, 10);
+        bcTemplateBuffer.lines.splice(idx, 1);
+        editorEl.innerHTML = bcBuildTemplateEditorHtml(bcTemplateBuffer.lines);
+      }
+    });
+  }
+  bcWireTemplateEditor($bcTemplateEditor);
+
+  $bcTemplateAddLine.addEventListener("click", function () { bcTemplateEditorAddLine("dsn"); });
+
+  $bcTemplateSave.addEventListener("click", function () {
+    bcSetClientTemplate(state.currentSiret, state.currentScopeKey, bcTemplateBuffer.lines);
+    bcApplyTemplateToCurrentControl();
+    $bcTemplateModal.close();
+    bcRender();
+  });
+
+  document.getElementById("bc-template-close").addEventListener("click", function () { $bcTemplateModal.close(); });
+
+  // Scope chooser inline (when client.scope is null and only one est, this stays hidden)
+  $bcScope.querySelectorAll('input[name="bc-scope"]').forEach(function (radio) {
+    radio.addEventListener("change", function () {
+      if (!state.currentSiret) return;
+      var newScope = radio.value;
+      bcSetClientScope(state.currentSiret, newScope);
+      // Force a re-resolve from the current payload
+      var establishments = (state.data && state.data.establishments) || [];
+      var establishmentId = (newScope === "by_establishment" && establishments[0] && establishments[0].identity) ? establishments[0].identity.siret : null;
+      setState({
+        currentScope: newScope,
+        currentEstablishmentId: establishmentId,
+        currentScopeKey: newScope === "by_establishment" ? ("etab:" + establishmentId) : "global",
+      });
+      bcResolveControl(state.data, null, state.fileSha256);
+    });
   });
 
   // Theme toggle disabled — light theme only

@@ -82,7 +82,7 @@
         </div>
       </div>
       <div class="results-header__actions">
-        <button class="btn btn--secondary" type="button" id="feedback-btn-results" data-action="feedback" hidden><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M13 8H7"/><path d="M17 12H7"/></svg>Partager un retour</button>
+        <button class="btn btn--secondary" type="button" id="bc-edit-template-btn"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg>R&#233;glages</button>
         <button class="btn btn--secondary" type="button" data-action="reset"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M12 18v-6"/><path d="m9 15 3-3 3 3"/></svg>Nouveau fichier</button>
       </div>
     </header>
@@ -113,255 +113,46 @@
       </div>
     </div>
 
-    <!-- ═══ Page: Analyse sociale ═══════════════════════════════ -->
-    <div id="page-analyse" class="page-content" hidden>
-
-    <!-- Summary cards -->
-    <section class="card-row">
-      <div class="summary-card">
-        <span class="summary-card__label">Salari&#233;s</span>
-        <span class="summary-card__value" id="card-employees">0</span>
-      </div>
-      <div class="summary-card">
-        <span class="summary-card__label">Embauches</span>
-        <span class="summary-card__value" id="card-hires">0</span>
-      </div>
-      <div class="summary-card">
-        <span class="summary-card__label">Sorties</span>
-        <span class="summary-card__value" id="card-exits">0</span>
-      </div>
-      <div class="summary-card">
-        <span class="summary-card__label">Stagiaires</span>
-        <span class="summary-card__value" id="card-stagiaires">0</span>
-      </div>
-    </section>
-
-    <!-- Retirement category table -->
-    <section class="data-section">
-      <h2 class="data-section__title">Par cat&#233;gorie de retraite</h2>
-      <table class="data-table">
-        <thead>
-          <tr><th>Code</th><th>Libell&#233;</th><th>Nombre</th></tr>
-        </thead>
-        <tbody id="table-retirement"></tbody>
-      </table>
-    </section>
-
-    <!-- Contract nature table -->
-    <section class="data-section">
-      <h2 class="data-section__title">Par nature de contrat</h2>
-      <table class="data-table">
-        <thead>
-          <tr><th>Code</th><th>Libell&#233;</th><th>Nombre</th></tr>
-        </thead>
-        <tbody id="table-contract"></tbody>
-      </table>
-    </section>
-
-    <!-- Amounts -->
-    <section class="data-section">
-      <h2 class="data-section__title">Montants</h2>
-      <div class="kv-grid">
-        <div class="kv-row">
-          <span class="kv-row__label">Tickets restaurant (employeur)</span>
-          <span class="kv-row__value" id="amt-tickets">N.C.</span>
-        </div>
-        <div class="kv-row">
-          <span class="kv-row__label">Transport (public)</span>
-          <span class="kv-row__value" id="amt-transport-public">N.C.</span>
-        </div>
-        <div class="kv-row">
-          <span class="kv-row__label">Transport (personnel)</span>
-          <span class="kv-row__value" id="amt-transport-personal">N.C.</span>
-        </div>
-      </div>
-    </section>
-
-    <!-- Extras -->
-    <section class="data-section">
-      <h2 class="data-section__title">Compl&#233;ments</h2>
-      <div class="kv-grid">
-        <div class="kv-row">
-          <span class="kv-row__label">Net fiscal</span>
-          <span class="kv-row__value" id="ext-net-fiscal">N.C.</span>
-        </div>
-        <div class="kv-row">
-          <span class="kv-row__label">Net vers&#233;</span>
-          <span class="kv-row__value" id="ext-net-paid">N.C.</span>
-        </div>
-        <div class="kv-row">
-          <span class="kv-row__label">PAS total</span>
-          <span class="kv-row__value" id="ext-pas">N.C.</span>
-        </div>
-        <div class="kv-row">
-          <span class="kv-row__label">Brut (bases salaire)</span>
-          <span class="kv-row__value" id="ext-gross">N.C.</span>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Analyse sociale detail ─────────────────────────────── -->
-    <section class="dashboard-section dashboard-section--no-top" id="section-social">
-
-      <div class="card-row">
-        <div class="summary-card">
-          <span class="summary-card__label">Effectif</span>
-          <span class="summary-card__value" id="sa-effectif">0</span>
-        </div>
-        <div class="summary-card">
-          <span class="summary-card__label">Entr&#233;es</span>
-          <span class="summary-card__value" id="sa-entrees">0</span>
-        </div>
-        <div class="summary-card">
-          <span class="summary-card__label">Sorties</span>
-          <span class="summary-card__value" id="sa-sorties">0</span>
-        </div>
-        <div class="summary-card">
-          <span class="summary-card__label">Stagiaires</span>
-          <span class="summary-card__value" id="sa-stagiaires">0</span>
-        </div>
-      </div>
-
-      <div class="card-row card-row--half">
-        <div class="summary-card">
-          <span class="summary-card__label">Cadres</span>
-          <span class="summary-card__value" id="sa-cadre">0</span>
-        </div>
-        <div class="summary-card">
-          <span class="summary-card__label">Non-cadres</span>
-          <span class="summary-card__value" id="sa-non-cadre">0</span>
-        </div>
-      </div>
-
-      <div class="data-section">
-        <h3 class="data-section__title">Contrats</h3>
-        <table class="data-table">
-          <thead><tr><th>Code</th><th>Libell&#233;</th><th>Nombre</th></tr></thead>
-          <tbody id="sa-table-contracts"></tbody>
-        </table>
-      </div>
-
-      <div class="data-section">
-        <h3 class="data-section__title">Motifs de sortie</h3>
-        <table class="data-table">
-          <thead><tr><th>Code</th><th>Libell&#233;</th><th>Nombre</th></tr></thead>
-          <tbody id="sa-table-exit-reasons"></tbody>
-        </table>
-      </div>
-
-      <div class="data-section">
-        <h3 class="data-section__title">Absences / suspensions</h3>
-        <div class="card-row card-row--half" style="margin-bottom: var(--sp-4);">
-          <div class="summary-card summary-card--compact">
-            <span class="summary-card__label">Salari&#233;s concern&#233;s</span>
-            <span class="summary-card__value" id="sa-abs-employees">0</span>
-          </div>
-          <div class="summary-card summary-card--compact">
-            <span class="summary-card__label">&#201;v&#233;nements</span>
-            <span class="summary-card__value" id="sa-abs-events">0</span>
-          </div>
-        </div>
-        <table class="data-table">
-          <thead><tr><th>Code motif</th><th>Nombre</th></tr></thead>
-          <tbody id="sa-table-absences"></tbody>
-        </table>
-      </div>
-
-      <div class="data-section">
-        <h3 class="data-section__title">R&#233;mun&#233;ration</h3>
-        <div class="kv-grid">
-          <div class="kv-row">
-            <span class="kv-row__label">Net vers&#233;</span>
-            <span class="kv-row__value" id="sa-net-verse">N.C.</span>
-          </div>
-          <div class="kv-row">
-            <span class="kv-row__label">Net fiscal</span>
-            <span class="kv-row__value" id="sa-net-fiscal">N.C.</span>
-          </div>
-          <div class="kv-row">
-            <span class="kv-row__label">PAS total</span>
-            <span class="kv-row__value" id="sa-pas">N.C.</span>
-          </div>
-        </div>
-      </div>
-
-      <div class="data-section" id="sa-alerts-section" hidden>
-        <h3 class="data-section__title">Alertes qualit&#233; (<span id="sa-alerts-count">0</span>)</h3>
-        <ul class="alerts-list" id="sa-alerts-list"></ul>
-      </div>
-    </section>
-
-    </div><!-- /page-analyse -->
-
     <!-- ═══ Page: Facturation ══════════════════════════════════ -->
     <div id="page-tracking" class="page-content">
 
-    <section class="dashboard-section dashboard-section--no-top" id="section-tracking">
-      <h2 class="dashboard-section__title">Bulletins facturables et complexit&#233;</h2>
-
-      <div class="card-row">
-        <div class="summary-card">
-          <span class="summary-card__label">Bulletins</span>
-          <span class="summary-card__value" id="pt-bulletins">0</span>
-        </div>
-        <div class="summary-card">
-          <span class="summary-card__label">Entr&#233;es facturables</span>
-          <span class="summary-card__value" id="pt-entries">0</span>
-          <div class="name-list" id="pt-entries-names"></div>
-        </div>
-        <div class="summary-card">
-          <span class="summary-card__label">Sorties facturables</span>
-          <span class="summary-card__value" id="pt-exits">0</span>
-          <div class="name-list" id="pt-exits-names"></div>
-        </div>
-        <div class="summary-card">
-          <span class="summary-card__label">Absences facturables</span>
-          <span class="summary-card__value" id="pt-absences">0</span>
-          <div class="name-list" id="pt-absences-names"></div>
-        </div>
+    <!-- Bandeau choix d'echelle (multi-etablissement seulement) -->
+    <section class="bc-scope" id="bc-scope" hidden>
+      <p class="bc-scope__title">Plusieurs &#233;tablissements d&#233;tect&#233;s</p>
+      <p class="bc-scope__sub">Choisissez avant de saisir vos prix. Le choix est m&#233;moris&#233; pour ce client.</p>
+      <div class="bc-scope__opts">
+        <label><input type="radio" name="bc-scope" value="global"> Vue globale (somme des &#233;tablissements)</label>
+        <label><input type="radio" name="bc-scope" value="by_establishment"> Par &#233;tablissement (grilles s&#233;par&#233;es)</label>
       </div>
+    </section>
 
-      <div class="card-row card-row--half">
-        <div class="summary-card" id="pt-exceptional-card" hidden>
-          <span class="summary-card__label">&#201;v&#233;nements exceptionnels</span>
-          <span class="summary-card__value" id="pt-exceptional">0</span>
-        </div>
-        <div class="summary-card">
-          <span class="summary-card__label">Anomalies DSN</span>
-          <span class="summary-card__value" id="pt-anomalies">0</span>
-        </div>
-      </div>
+    <!-- Selecteur de controles si plusieurs versions du meme mois x scope -->
+    <section class="bc-controls-switcher" id="bc-controls-switcher" hidden>
+      <div class="bc-controls-switcher__list" id="bc-controls-switcher-list"></div>
+    </section>
 
-      <div class="data-section">
-        <h3 class="data-section__title">Score de complexit&#233;</h3>
-        <div class="complexity-score" id="pt-score-value">0</div>
-        <p class="complexity-score__caption">Indicateur de charge de travail (non contractuel)</p>
-        <table class="data-table" style="margin-top: var(--sp-4);">
-          <thead><tr><th>Composante</th><th>Valeur</th><th>Poids</th><th>Points</th></tr></thead>
-          <tbody id="pt-score-inputs"></tbody>
-        </table>
+    <!-- Bandeau pour controle non-latest -->
+    <div class="bc-stale-banner" id="bc-stale-banner" hidden>
+      Vous consultez un contr&#244;le qui n&rsquo;est plus le contr&#244;le courant pour ce mois.
+    </div>
+
+    <!-- Tableau de facturation (rendu par scope) -->
+    <section class="bc-section" id="bc-section">
+      <h2 class="bc-section__title">Grille de facturation</h2>
+      <div id="bc-tables"></div>
+      <div class="bc-totals" id="bc-totals">
+        <button type="button" class="btn btn--secondary bc-totals__add" id="bc-add-line-btn">+ Ajouter une ligne</button>
+        <div class="bc-totals__value" id="bc-totals-value"></div>
       </div>
+    </section>
+
+    <!-- Detail des evenements -->
+    <section class="bc-section" id="bc-events-section" hidden>
+      <h2 class="bc-section__title">D&#233;tail des &#233;v&#233;nements (DSN courante)</h2>
+      <div class="bc-events" id="bc-events"></div>
     </section>
 
     </div><!-- /page-tracking -->
-
-    <!-- ═══ Page: Contrôle de DSN ══════════════════════════════ -->
-    <div id="page-controle" class="page-content" hidden>
-
-    <section class="dashboard-section dashboard-section--no-top" id="section-contributions">
-      <h2 class="dashboard-section__title">Rapprochement cotisations</h2>
-
-      <div class="controle-sticky-header">
-        <div id="cc-trust-banner" hidden></div>
-        <nav id="contrib-family-tabs" class="tab-bar tab-bar--sub"></nav>
-      </div>
-
-      <div class="contrib-view">
-        <div id="contrib-family-panels"></div>
-      </div>
-    </section>
-
-    </div><!-- /page-controle -->
 
   </main>
 
@@ -376,6 +167,93 @@
       </nav>
     </div>
   </footer>
+
+  <!-- ═══ Modal : choix scope (multi-etablissement) ════════════ -->
+  <dialog id="bc-scope-modal" class="bc-modal" aria-labelledby="bc-scope-modal-title">
+    <div class="bc-modal__panel">
+      <h2 id="bc-scope-modal-title">Plusieurs &#233;tablissements d&#233;tect&#233;s</h2>
+      <p class="bc-modal__intro" id="bc-scope-modal-intro">&mdash;</p>
+      <div class="bc-modal__choices">
+        <button type="button" class="bc-modal__choice" data-bc-scope-choice="global">
+          <span class="bc-modal__choice-title">Vue globale</span>
+          <span class="bc-modal__choice-sub">Une seule grille pour la somme des &#233;tablissements.</span>
+        </button>
+        <button type="button" class="bc-modal__choice" data-bc-scope-choice="by_establishment">
+          <span class="bc-modal__choice-title">Par &#233;tablissement</span>
+          <span class="bc-modal__choice-sub">Une grille s&#233;par&#233;e pour chaque &#233;tablissement.</span>
+        </button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- ═══ Modal : DSN differente detectee ══════════════════════ -->
+  <dialog id="bc-mismatch-modal" class="bc-modal" aria-labelledby="bc-mismatch-modal-title">
+    <div class="bc-modal__panel">
+      <h2 id="bc-mismatch-modal-title">D&#233;claration diff&#233;rente d&#233;tect&#233;e</h2>
+      <p class="bc-modal__intro" id="bc-mismatch-intro">&mdash;</p>
+      <ul class="bc-mismatch__list" id="bc-mismatch-list"></ul>
+      <div class="bc-modal__choices">
+        <button type="button" class="bc-modal__choice bc-modal__choice--primary" data-bc-mismatch-choice="new">
+          <span class="bc-modal__choice-title">Cr&#233;er un nouveau contr&#244;le pour cette DSN <span class="bc-pill">recommand&#233;</span></span>
+          <span class="bc-modal__choice-sub">Le contr&#244;le pr&#233;c&#233;dent reste consultable et est marqu&#233; remplac&#233;.</span>
+        </button>
+        <button type="button" class="bc-modal__choice" data-bc-mismatch-choice="reopen">
+          <span class="bc-modal__choice-title">R&#233;ouvrir le contr&#244;le existant</span>
+          <span class="bc-modal__choice-sub">Charge le contr&#244;le courant sans modification.</span>
+        </button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- ═══ Modal : ajouter une ligne ════════════════════════════ -->
+  <dialog id="bc-add-line-modal" class="bc-modal" aria-labelledby="bc-add-line-modal-title">
+    <div class="bc-modal__panel">
+      <div class="bc-modal__head">
+        <h2 id="bc-add-line-modal-title">Ajouter une ligne</h2>
+        <button type="button" class="bc-modal__close" id="bc-add-line-close" aria-label="Fermer">&times;</button>
+      </div>
+      <div class="bc-add-line__tabs">
+        <button type="button" class="bc-add-line__tab bc-add-line__tab--active" data-bc-add-line-tab="dsn">Compteur DSN</button>
+        <button type="button" class="bc-add-line__tab" data-bc-add-line-tab="free">Ligne libre</button>
+      </div>
+      <div class="bc-add-line__panel" id="bc-add-line-panel-dsn">
+        <p class="bc-modal__intro">Ajoutez une ligne dont la quantit&#233; sera lue automatiquement dans la DSN.</p>
+        <ul class="bc-add-line__sources" id="bc-add-line-sources"></ul>
+      </div>
+      <div class="bc-add-line__panel" id="bc-add-line-panel-free" hidden>
+        <p class="bc-modal__intro">Ajoutez une ligne libre (forfait, ajustement, remise, prestation exceptionnelle).</p>
+        <form id="bc-add-line-free-form" class="bc-add-line__free">
+          <label class="bc-field bc-field--full"><span>Libell&#233;</span><input type="text" id="bc-add-line-free-label" required placeholder="Forfait mensuel"></label>
+          <div class="bc-field-row">
+            <label class="bc-field"><span>Quantit&#233;</span><input type="text" inputmode="decimal" id="bc-add-line-free-qty" value="1" required></label>
+            <label class="bc-field"><span>Prix unitaire HT (&euro;)</span><input type="text" inputmode="decimal" id="bc-add-line-free-pu" value="0" required></label>
+          </div>
+          <div class="bc-add-line__preview">
+            Total ligne : <strong id="bc-add-line-free-preview">0,00&nbsp;&euro;</strong>
+          </div>
+          <div class="bc-add-line__submit">
+            <button type="submit" class="btn btn--primary">Ajouter la ligne</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- ═══ Modal : edition grille de reference client ═══════════ -->
+  <dialog id="bc-template-modal" class="bc-modal" aria-labelledby="bc-template-modal-title">
+    <div class="bc-modal__panel bc-modal__panel--wide">
+      <div class="bc-modal__head">
+        <h2 id="bc-template-modal-title">Grille de r&#233;f&#233;rence du client</h2>
+        <button type="button" class="bc-modal__close" id="bc-template-close" aria-label="Fermer">&times;</button>
+      </div>
+      <p class="bc-modal__warning">Modifications appliqu&#233;es au contr&#244;le en cours et m&#233;moris&#233;es pour les prochaines DSN de ce client.</p>
+      <div id="bc-template-editor"></div>
+      <div class="bc-modal__actions">
+        <button type="button" class="btn btn--secondary" id="bc-template-add-line">+ Ligne</button>
+        <button type="button" class="btn btn--primary" id="bc-template-save">Enregistrer</button>
+      </div>
+    </div>
+  </dialog>
 
   <dialog id="feedback-modal" class="feedback-modal" aria-labelledby="feedback-title">
     <form id="feedback-form" class="feedback-modal__panel" method="dialog" novalidate>
