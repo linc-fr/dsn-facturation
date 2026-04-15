@@ -1126,10 +1126,33 @@
     bcRender();
   }
 
+  function resolveEnterpriseIdentity(payload, preferredEstIdx) {
+    var establishments = (payload && payload.establishments) || [];
+    var idx = typeof preferredEstIdx === "number" ? preferredEstIdx : 0;
+    var est = establishments[idx] || establishments[0] || null;
+    var identity = (est && est.identity) || null;
+
+    if (identity && (identity.name || identity.siret)) {
+      var estSiret = identity.siret || null;
+      return {
+        name: identity.name || null,
+        siret: estSiret,
+        siren: estSiret && estSiret.length >= 9 ? estSiret.slice(0, 9) : null,
+      };
+    }
+
+    var company = (payload && payload.company) || {};
+    return {
+      name: company.name || null,
+      siret: company.siret || null,
+      siren: company.siren || null,
+    };
+  }
+
   function renderHeader(d) {
-    var company = d.company || {};
-    $headerCompany.textContent = company.name || company.siren || "Entreprise";
-    $headerSiret.textContent = formatSiret(company.siret);
+    var enterprise = resolveEnterpriseIdentity(d, state.activeEstIdx);
+    $headerCompany.textContent = enterprise.name || enterprise.siren || "Entreprise";
+    $headerSiret.textContent = formatSiret(enterprise.siret);
     $headerPeriod.textContent = formatMonth(d.declaration ? d.declaration.month : null);
   }
 
@@ -2429,9 +2452,10 @@
   //   - no match but other controls exist → mismatch modal
   //   - no controls at all → create snapshot from template
   function bcResolveAfterExtract(payload, file, sha256) {
-    var siret = (payload.company && payload.company.siret) || null;
-    var siren = (payload.company && payload.company.siren) || null;
-    var label = (payload.company && payload.company.name) || siret || "Client";
+    var enterprise = resolveEnterpriseIdentity(payload, 0);
+    var siret = enterprise.siret || null;
+    var siren = enterprise.siren || null;
+    var label = enterprise.name || siret || "Client";
     var month = bcMonthFromPayload(payload);
 
     if (!siret || !month) {
